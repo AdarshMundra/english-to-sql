@@ -1,2 +1,13 @@
 .env
 /.venv
+# Dependencies
+/frontend/node_modules
+/frontend/.pnp
+.pnp.js
+
+# Testing
+/frontend/coverage
+
+# Production
+/frontend/build
+/frontend/dist
