@@ -31,7 +31,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from run import run_pipeline
-from agents.schema_agent import run as get_schema
+from agents.schema_agent import run as get_schema, get_cache_info
 from agents.schema_sources.openapi_schema import from_string as openapi_from_string
 
 # ── App ───────────────────────────────────────────────────────────────────────
@@ -170,6 +170,23 @@ class SchemaOut(BaseModel):
     column_count:  int
     relationships: list[str]
     tables:        list[TableOut]
+
+
+class SchemaLoadResponse(BaseModel):
+    loaded:        bool
+    table_count:   int
+    column_count:  int
+    loaded_at:     float
+    ttl_remaining_s: int
+    message:       str
+
+
+class SchemaStatusResponse(BaseModel):
+    loaded:        bool
+    table_count:   int
+    column_count:  int
+    loaded_at:     Optional[float] = None
+    ttl_remaining_s: int
 
 
 class HealthResponse(BaseModel):
@@ -368,4 +385,68 @@ def preview_schema(body: SchemaPreviewRequest):
             )
             for t in schema.tables
         ],
+    )
+
+
+@app.post(
+    "/schema/load",
+    response_model=SchemaLoadResponse,
+    tags=["schema"],
+    summary="Pre-load schema into server-side cache",
+    description=(
+        "Runs Agent 1 (Schema Agent) immediately and stores the result in the "
+        "in-process cache. All subsequent `/query` calls will skip Agent 1 and "
+        "use the cached schema, significantly reducing response time. "
+        "Cache expires after `SCHEMA_CACHE_TTL_SECONDS` (default 1 hour)."
+    ),
+)
+def load_schema(body: SchemaPreviewRequest):
+    try:
+        if body.schema_source == SchemaSourceEnum.db:
+            conn = body.connection_string or os.getenv("DB_CONNECTION_STRING", "")
+            if not conn:
+                raise HTTPException(status_code=422, detail="connection_string required")
+            schema = get_schema(connection_string=conn)
+        elif body.schema_source == SchemaSourceEnum.openapi_url:
+            if not body.openapi_url:
+                raise HTTPException(status_code=422, detail="openapi_url required")
+            schema = get_schema(openapi_url=body.openapi_url)
+        else:
+            raise HTTPException(status_code=422, detail="schema_source must be 'db' or 'openapi_url'")
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+    info = get_cache_info()
+    tc = len(schema.tables)
+    cc = sum(len(t.columns) for t in schema.tables)
+    return SchemaLoadResponse(
+        loaded=True,
+        table_count=tc,
+        column_count=cc,
+        loaded_at=info.get("loaded_at", 0.0),
+        ttl_remaining_s=info.get("ttl_remaining_s", 0),
+        message=f"Schema cached: {tc} tables, {cc} columns",
+    )
+
+
+@app.get(
+    "/schema/status",
+    response_model=SchemaStatusResponse,
+    tags=["schema"],
+    summary="Check whether schema is currently cached",
+    description=(
+        "Returns whether Agent 1's output is present in the in-process cache. "
+        "When `loaded=true`, `/query` calls will skip Agent 1 entirely."
+    ),
+)
+def schema_status():
+    info = get_cache_info()
+    return SchemaStatusResponse(
+        loaded=info["loaded"],
+        table_count=info.get("table_count", 0),
+        column_count=info.get("column_count", 0),
+        loaded_at=info.get("loaded_at"),
+        ttl_remaining_s=info.get("ttl_remaining_s", 0),
     )

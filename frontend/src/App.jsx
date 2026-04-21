@@ -22,12 +22,23 @@ export default function App() {
     openApiUrl: '',
     maxRetries: 3,
   })
+  const [schemaStatus, setSchemaStatus] = useState({
+    loaded: false, table_count: 0, column_count: 0, loaded_at: null, ttl_remaining_s: 0,
+  })
+
+  const refreshSchemaStatus = () => {
+    fetch('/api/schema/status')
+      .then(r => r.json())
+      .then(setSchemaStatus)
+      .catch(() => {})
+  }
 
   useEffect(() => {
     fetch('/api/health')
       .then(r => r.json())
       .then(setHealth)
       .catch(() => setHealth({ status: 'unreachable' }))
+    refreshSchemaStatus()
   }, [])
 
   return (
@@ -54,10 +65,17 @@ export default function App() {
       </header>
 
       <main className={styles.main}>
-        {activeTab === 'query' && <QueryPanel settings={settings} />}
+        {activeTab === 'query' && <QueryPanel settings={settings} schemaStatus={schemaStatus} />}
         {activeTab === 'schema' && <SchemaViewer settings={settings} />}
         {activeTab === 'execute' && <SqlExecutor settings={settings} />}
-        {activeTab === 'settings' && <SettingsPanel settings={settings} setSettings={setSettings} />}
+        {activeTab === 'settings' && (
+          <SettingsPanel
+            settings={settings}
+            setSettings={setSettings}
+            schemaStatus={schemaStatus}
+            onSchemaLoaded={refreshSchemaStatus}
+          />
+        )}
       </main>
     </div>
   )

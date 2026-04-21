@@ -11,7 +11,7 @@ const EXAMPLE_QUERIES = [
   'Show average exam scores per subject',
 ]
 
-export default function QueryPanel({ settings }) {
+export default function QueryPanel({ settings, schemaStatus }) {
   const [query, setQuery] = useState('')
   const [loading, setLoading] = useState(false)
   const [result, setResult] = useState(null)
@@ -69,6 +69,11 @@ export default function QueryPanel({ settings }) {
         <div className={styles.sectionHeader}>
           <span className={styles.sectionTitle}>Natural Language Query</span>
           <div className={styles.headerActions}>
+            {schemaStatus?.loaded && (
+              <span className={styles.schemaCacheBadge} title={`${schemaStatus.table_count} tables cached — Agent 1 will be skipped`}>
+                ⚡ Schema cached
+              </span>
+            )}
             <label className={styles.toggle}>
               <input
                 type="checkbox"

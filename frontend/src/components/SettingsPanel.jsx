@@ -1,8 +1,10 @@
 import { useState } from 'react'
 import styles from './SettingsPanel.module.css'
 
-export default function SettingsPanel({ settings, setSettings }) {
+export default function SettingsPanel({ settings, setSettings, schemaStatus, onSchemaLoaded }) {
   const [saved, setSaved] = useState(false)
+  const [loadingSchema, setLoadingSchema] = useState(false)
+  const [loadError, setLoadError] = useState(null)
 
   const update = (key, value) => {
     setSettings(prev => ({ ...prev, [key]: value }))
@@ -11,6 +13,28 @@ export default function SettingsPanel({ settings, setSettings }) {
   const handleSave = () => {
     setSaved(true)
     setTimeout(() => setSaved(false), 2000)
+  }
+
+  const handleLoadSchema = async () => {
+    setLoadingSchema(true)
+    setLoadError(null)
+    try {
+      const body = { schema_source: settings.schemaSource }
+      if (settings.schemaSource === 'db') body.connection_string = settings.connectionString || undefined
+      if (settings.schemaSource === 'openapi_url') body.openapi_url = settings.openApiUrl
+      const res = await fetch('/api/schema/load', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.detail || 'Failed to load schema')
+      onSchemaLoaded?.()
+    } catch (err) {
+      setLoadError(err.message)
+    } finally {
+      setLoadingSchema(false)
+    }
   }
 
   return (
@@ -67,6 +91,35 @@ export default function SettingsPanel({ settings, setSettings }) {
                 spellCheck={false}
               />
               <span className={styles.fieldHint}>URL to an OpenAPI 3.x JSON or YAML specification.</span>
+            </div>
+          )}
+
+          <div className={styles.schemaLoadRow}>
+            <div className={styles.schemaLoadLeft}>
+              <div className={`${styles.schemaStatusDot} ${schemaStatus?.loaded ? styles.dotLoaded : styles.dotUnloaded}`} />
+              {schemaStatus?.loaded ? (
+                <span className={styles.schemaStatusText}>
+                  Schema cached — {schemaStatus.table_count} tables, {schemaStatus.column_count} columns
+                  <span className={styles.ttlBadge}>{Math.round(schemaStatus.ttl_remaining_s / 60)}m left</span>
+                </span>
+              ) : (
+                <span className={styles.schemaStatusText}>Schema not loaded — Agent 1 runs on each query</span>
+              )}
+            </div>
+            <button
+              className={styles.loadSchemaBtn}
+              onClick={handleLoadSchema}
+              disabled={loadingSchema}
+            >
+              {loadingSchema
+                ? <><span className={styles.spinner} /> Loading…</>
+                : schemaStatus?.loaded ? 'Reload Schema' : 'Load Schema'}
+            </button>
+          </div>
+
+          {loadError && (
+            <div className={styles.loadError}>
+              <span>✕</span> {loadError}
             </div>
           )}
         </div>

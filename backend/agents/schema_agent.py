@@ -177,3 +177,24 @@ def run(
     if conn:
         return _from_db(conn)
     raise ValueError("Provide one of: connection_string, openapi_url, openapi_file, openapi_spec")
+
+
+def get_cache_info() -> dict:
+    """Return metadata about the currently cached schema (if any)."""
+    now = time.time()
+    valid = [(k, v) for k, v in _schema_cache.items() if now - v[1] <= _TTL]
+    if not valid:
+        return {"loaded": False, "table_count": 0, "column_count": 0, "loaded_at": None, "ttl_remaining_s": 0}
+    _, (schema, ts) = max(valid, key=lambda x: x[1][1])
+    return {
+        "loaded": True,
+        "table_count": len(schema.tables),
+        "column_count": sum(len(t.columns) for t in schema.tables),
+        "loaded_at": ts,
+        "ttl_remaining_s": int(_TTL - (now - ts)),
+    }
+
+
+def clear_cache() -> None:
+    """Force-clear the schema cache (used by force_refresh and tests)."""
+    _schema_cache.clear()

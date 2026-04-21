@@ -82,6 +82,17 @@
   color: var(--text-secondary);
 }
 
+.schemaCacheBadge {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--accent-green);
+  background: rgba(63, 185, 80, 0.1);
+  border: 1px solid rgba(63, 185, 80, 0.25);
+  border-radius: 10px;
+  padding: 2px 9px;
+  cursor: default;
+}
+
 /* Form */
 .form {
   margin-bottom: 12px;
