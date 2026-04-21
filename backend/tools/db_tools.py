@@ -13,10 +13,23 @@ Tools:
 import json
 import re
 from typing import Any
+from urllib.parse import quote, unquote
 
 import sqlglot
 import sqlglot.errors
 from langchain_core.tools import tool
+
+
+def _sanitize_dsn(dsn: str) -> str:
+    """Re-encode the password in a PostgreSQL DSN so special chars like % are safe."""
+    pattern = r'^(postgresql(?:\+\w+)?://[^:@]+:)([^@]*)(@.+)$'
+    match = re.match(pattern, dsn)
+    if match:
+        prefix, password, suffix = match.groups()
+        encoded = quote(unquote(password), safe='')
+        return prefix + encoded + suffix
+    return dsn
+
 
 # ── Write-op guard ─────────────────────────────────────────────────────────────
 
@@ -39,7 +52,7 @@ def fetch_db_schema(connection_string: str) -> str:
     except ImportError:
         raise RuntimeError("psycopg2 is required. Run: pip install psycopg2-binary")
 
-    conn = psycopg2.connect(connection_string)
+    conn = psycopg2.connect(_sanitize_dsn(connection_string))
     cur = conn.cursor()
 
     cur.execute("""
@@ -192,7 +205,7 @@ def run_explain(sql: str, connection_string: str) -> str:
     """
     try:
         import psycopg2
-        conn = psycopg2.connect(connection_string)
+        conn = psycopg2.connect(_sanitize_dsn(connection_string))
         cur = conn.cursor()
         cur.execute(f"EXPLAIN {sql}")
         cur.close()
@@ -227,7 +240,7 @@ def execute_sql(sql: str, connection_string: str, max_rows: int = 500) -> str:
 
     t0 = _time.perf_counter()
     try:
-        conn = psycopg2.connect(connection_string)
+        conn = psycopg2.connect(_sanitize_dsn(connection_string))
         conn.set_session(readonly=True, autocommit=True)   # read-only session
         cur = conn.cursor()
         cur.execute(sql)
