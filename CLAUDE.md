@@ -5,6 +5,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Setup
 
 ```bash
+cd backend
 python -m venv .venv
 source .venv/bin/activate  # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
@@ -16,6 +17,7 @@ cp .env.example .env
 
 **CLI:**
 ```bash
+cd backend
 python run.py "How many students are enrolled per department?"
 python run.py "Top 5 professors by course count" --stream
 python run.py "List all students" --db "postgresql://user:pass@localhost/mydb" --execute
@@ -23,13 +25,22 @@ python run.py "List all students" --db "postgresql://user:pass@localhost/mydb" -
 
 **API server:**
 ```bash
+cd backend
 uvicorn api.main:app --reload --port 8000
 # Swagger UI: http://localhost:8000/docs
+```
+
+**Frontend:**
+```bash
+cd frontend
+npm install
+npm run dev   # http://localhost:5173
 ```
 
 ## Tests
 
 ```bash
+cd backend
 pytest tests/ -v
 pytest tests/ -v -k "TestPromptTemplates"
 pytest tests/ -v -k "TestTools"
@@ -55,26 +66,27 @@ English Query
 ```
 
 **Key files:**
-- `state/graph_state.py` — `GraphState` TypedDict; all agents read/write from this shared state
-- `graph/pipeline_graph.py` — LangGraph `StateGraph` wiring: nodes, conditional edges, retry logic
-- `agents/` — One file per agent; each node function takes/returns `GraphState`
-- `prompts/templates.py` — All 5 `ChatPromptTemplate` definitions (generator has two: initial + retry)
-- `tools/db_tools.py` — LangChain `@tool` functions: schema fetch, syntax/schema validation, EXPLAIN, execute
-- `api/main.py` — FastAPI app with `/query`, `/execute`, `/schema`, `/health` endpoints
-- `run.py` — Public API (`run_pipeline`, `stream_pipeline`) and CLI entry point
+- `backend/state/graph_state.py` — `GraphState` TypedDict; all agents read/write from this shared state
+- `backend/graph/pipeline_graph.py` — LangGraph `StateGraph` wiring: nodes, conditional edges, retry logic
+- `backend/agents/` — One file per agent; each node function takes/returns `GraphState`
+- `backend/prompts/templates.py` — All 5 `ChatPromptTemplate` definitions (generator has two: initial + retry)
+- `backend/tools/db_tools.py` — LangChain `@tool` functions: schema fetch, syntax/schema validation, EXPLAIN, execute
+- `backend/api/main.py` — FastAPI app with `/query`, `/execute`, `/schema`, `/health` endpoints
+- `backend/run.py` — Public API (`run_pipeline`, `stream_pipeline`) and CLI entry point
+- `frontend/src/` — React + Vite UI components
 
 **Schema sources** (configured per request or via env):
 - PostgreSQL live introspection (psycopg2)
 - OpenAPI 3.x spec (URL, local file, or dict) → mapped to pseudo-SQL types
 - Pre-built `SchemaContext` object passed directly
 
-**Validation layers in `agents/validator.py`:**
+**Validation layers in `backend/agents/validator.py`:**
 1. sqlglot syntax parse + write-operation guard (blocks INSERT/UPDATE/DELETE/DROP)
 2. sqlglot AST — verify all table/column references exist in schema
 3. PostgreSQL `EXPLAIN` dry-run (optional, requires live DB)
 4. LLM semantic check — does the SQL answer the original question?
 
-**Retry mechanism:** `graph/pipeline_graph.py:should_retry()` checks `validation_passed` and `retry_count < MAX_RETRIES`. On retry, Agent 3 receives the validator's error message via `SQL_RETRY_PROMPT`.
+**Retry mechanism:** `backend/graph/pipeline_graph.py:should_retry()` checks `validation_passed` and `retry_count < MAX_RETRIES`. On retry, Agent 3 receives the validator's error message via `SQL_RETRY_PROMPT`.
 
 ## Environment Variables
 
@@ -90,4 +102,4 @@ English Query
 
 ## Sample Database
 
-`college_schema.sql` defines a 10-table PostgreSQL schema (departments, professors, courses, students, enrollments, exams, exam_results, library_books, book_issues, hostels) useful for local testing.
+`backend/college_schema.sql` defines a 10-table PostgreSQL schema (departments, professors, courses, students, enrollments, exams, exam_results, library_books, book_issues, hostels) useful for local testing.

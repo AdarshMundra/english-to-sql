@@ -1,89 +1,119 @@
 # Multi-Agent Text-to-SQL — LangChain + LangGraph
 
-Converts English questions into valid PostgreSQL SELECT statements
-using a four-agent LangGraph pipeline with LangChain prompt templates.
+Converts English questions into valid PostgreSQL SELECT statements using a five-agent LangGraph pipeline with LangChain prompt templates. Includes a React/Vite frontend for interactive querying.
+
+---
+
+## Project Structure
+
+```
+text_to_sql_lg/
+│
+├── backend/                        # Python API + LangGraph pipeline
+│   ├── agents/
+│   │   ├── schema_agent.py         # Agent 1 — schema introspection + cache
+│   │   ├── query_agent.py          # Agent 2 — query understanding
+│   │   ├── sql_generator.py        # Agent 3 — SQL generation (+ retry)
+│   │   ├── validator.py            # Agent 4 — 4-layer validation
+│   │   ├── executor_agent.py       # Agent 5 — optional SQL execution
+│   │   └── schema_sources/
+│   │       └── openapi_schema.py   # OpenAPI → SchemaContext parser
+│   │
+│   ├── api/
+│   │   └── main.py                 # FastAPI app (endpoints: /query, /execute, /schema, /health)
+│   │
+│   ├── graph/
+│   │   └── pipeline_graph.py       # StateGraph builder + conditional retry edge
+│   │
+│   ├── prompts/
+│   │   └── templates.py            # All 5 ChatPromptTemplate definitions
+│   │
+│   ├── state/
+│   │   └── graph_state.py          # TypedDict GraphState + Pydantic sub-models
+│   │
+│   ├── tools/
+│   │   └── db_tools.py             # @tool: fetch_db_schema, validate_sql_syntax,
+│   │                               #        validate_schema_refs, run_explain, execute_sql
+│   │
+│   ├── tests/
+│   │   └── test_pipeline.py        # Unit + integration + benchmark tests
+│   │
+│   ├── run.py                      # Public API (run_pipeline, stream_pipeline) + CLI
+│   ├── college_schema.sql          # Sample 10-table PostgreSQL schema for local testing
+│   ├── requirements.txt
+│   ├── .env.example
+│   └── .env                        # Local secrets (git-ignored)
+│
+└── frontend/                       # React + Vite UI
+    ├── src/
+    │   ├── App.jsx
+    │   ├── main.jsx
+    │   ├── index.css
+    │   └── components/
+    │       ├── QueryPanel.jsx       # Natural language input + submit
+    │       ├── ResultsTable.jsx     # Query results table
+    │       ├── SchemaViewer.jsx     # Database schema browser
+    │       ├── SettingsPanel.jsx    # Connection string + settings
+    │       ├── SqlBlock.jsx         # Syntax-highlighted SQL display
+    │       ├── SqlExecutor.jsx      # Direct SQL execution
+    │       └── StatusBar.jsx        # Pipeline status indicator
+    ├── dist/                        # Production build output
+    ├── index.html
+    ├── package.json
+    └── vite.config.js
+```
 
 ---
 
 ## Architecture
 
 ```
-              START
-                │
-     ┌──────────┴──────────┐
-     ▼                     ▼
-schema_agent          query_agent       ← parallel (LangGraph fan-out)
-(Agent 1)             (Agent 2)
-     └──────────┬──────────┘
-                ▼
-         sql_generator                  ← Agent 3
-         (first attempt)
-                │
-                ▼
-           validator                    ← Agent 4
-                │
-      ┌─────────┴─────────┐
-  passed                failed
-      │                   │ (retries left)
-      ▼                   ▼
-    END           sql_generator         ← Agent 3 (retry with error context)
-                  (SQL_RETRY_PROMPT)
+English Query
+  → [Agent 1: Schema Agent]    — introspects DB / parses OpenAPI / uses pre-built schema (cached)
+  → [Agent 2: Query Agent]     — extracts semantic structure (intent, filters, joins, aggregations)
+  → [Agent 3: SQL Generator]   — generates SELECT from schema + key points
+  → [Agent 4: Validator]       — 4-layer check: syntax → schema refs → EXPLAIN → LLM semantic
+      ↳ on failure: loops back to Agent 3 with error context (up to MAX_RETRIES)
+  → [Finalise Node]            — sets status: success or failed
+  → [Agent 5: Executor]        — optional; runs SQL when execute_query=True
 ```
 
 ---
 
-## Project structure
-
-```
-text_to_sql_lg/
-│
-├── prompts/
-│   └── templates.py          # All ChatPromptTemplate definitions (5 templates)
-│
-├── state/
-│   └── graph_state.py        # TypedDict GraphState + Pydantic sub-models
-│
-├── tools/
-│   └── db_tools.py           # @tool: fetch_db_schema, validate_sql_syntax,
-│                             #        validate_schema_refs, run_explain
-│
-├── agents/
-│   ├── schema_agent.py       # Node: Agent 1 — schema introspection + cache
-│   ├── query_agent.py        # Node: Agent 2 — query understanding
-│   ├── sql_generator.py      # Node: Agent 3 — SQL generation (+ retry)
-│   └── validator.py          # Node: Agent 4 — 3-layer validation
-│
-├── graph/
-│   └── pipeline_graph.py     # StateGraph builder + conditional retry edge
-│
-├── tests/
-│   └── test_pipeline.py      # Unit + integration + benchmark tests
-│
-├── run.py                    # Public API (run_pipeline) + CLI
-├── requirements.txt
-└── .env.example
-```
-
----
-
-## Setup
+## Backend Setup
 
 ```bash
+cd backend
 python -m venv .venv
-source .venv/bin/activate
+source .venv/bin/activate  # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 
 cp .env.example .env
-# Add your ANTHROPIC_API_KEY and DB_CONNECTION_STRING
+# Set OPENAI_API_KEY and optionally DB_CONNECTION_STRING in .env
 ```
 
----
+### Run the API server
 
-## Usage
+```bash
+cd backend
+uvicorn api.main:app --reload --port 8000
+# Swagger UI: http://localhost:8000/docs
+```
 
-### As a library
+### Run the CLI
+
+```bash
+cd backend
+python run.py "How many students are enrolled per department?"
+python run.py "Top 5 professors by course count" --stream
+python run.py "List all students" --db "postgresql://user:pass@localhost/mydb" --execute
+```
+
+### Run as a library
 
 ```python
+import sys
+sys.path.insert(0, "backend")
 from run import run_pipeline
 
 result = run_pipeline("How many orders were placed by customers in Mumbai last month?")
@@ -97,50 +127,73 @@ print(result)
 # }
 ```
 
-### CLI — single query
+---
+
+## Frontend Setup
 
 ```bash
-python run.py "Top 10 customers by revenue"
+cd frontend
+npm install
+npm run dev      # development server (default: http://localhost:5173)
+npm run build    # production build → frontend/dist/
 ```
 
-### CLI — stream node-by-node output
-
-```bash
-python run.py "How many out-of-stock products?" --stream
-```
-
-### CLI — custom DB and retry count
-
-```bash
-python run.py "Average order value per city" \
-  --db "postgresql://user:pass@localhost/mydb" \
-  --retries 5
-```
+The frontend proxies `/query`, `/execute`, `/schema`, and `/health` to the backend at `http://localhost:8000`.
 
 ---
 
-## Running tests
+## Tests
 
 ```bash
-# All tests
+cd backend
 pytest tests/ -v
-
-# Just prompt template tests
 pytest tests/ -v -k "TestPromptTemplates"
-
-# Just tool tests
 pytest tests/ -v -k "TestTools"
-
-# Graph routing logic
 pytest tests/ -v -k "TestGraphRouting"
-
-# Benchmark (known-good SQL pairs)
 pytest tests/ -v -k "TestBenchmark"
 ```
 
 ---
 
-## LangChain prompt templates
+## Environment Variables
+
+| Variable | Default | Notes |
+|---|---|---|
+| `OPENAI_API_KEY` | required | |
+| `OPENAI_MODEL` | `gpt-4o` | |
+| `DB_CONNECTION_STRING` | — | PostgreSQL DSN; optional if using OpenAPI schema |
+| `MAX_RETRIES` | `3` | Validator→generator retry attempts |
+| `SCHEMA_CACHE_TTL_SECONDS` | `3600` | Schema introspection cache lifetime |
+| `LOG_LEVEL` | `INFO` | |
+| `EXECUTOR_MAX_ROWS` | `500` | Row limit for Agent 5 results |
+
+---
+
+## API Endpoints
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/health` | Service health + model info |
+| `POST` | `/query` | Run pipeline (DB or OpenAPI schema source) |
+| `POST` | `/query/openapi-url` | Run pipeline using an OpenAPI spec URL |
+| `POST` | `/query/openapi-file` | Run pipeline with an uploaded OpenAPI file |
+| `POST` | `/execute` | Execute raw SQL directly (no pipeline) |
+| `POST` | `/schema/preview` | Preview schema without running a query |
+
+---
+
+## Validation Layers (Agent 4)
+
+| Layer | Method | Catches |
+|---|---|---|
+| 1 | `validate_sql_syntax` (sqlglot) | Syntax errors, write operations |
+| 2 | `validate_schema_refs` (sqlglot AST) | Unknown tables/columns |
+| 3 | `run_explain` (psycopg2 EXPLAIN) | Planner-level errors (optional, needs live DB) |
+| 4 | `VALIDATOR_PROMPT` + LLM | Semantic correctness vs. the original question |
+
+---
+
+## LangChain Prompt Templates
 
 | Template | File | Used by |
 |---|---|---|
@@ -152,24 +205,9 @@ pytest tests/ -v -k "TestBenchmark"
 
 ---
 
-## Validation layers (Agent 4)
+## Sample Database
 
-| Layer | Method | Catches |
-|---|---|---|
-| 1 | `validate_sql_syntax` tool (sqlglot) | Syntax errors, write operations |
-| 2 | `validate_schema_refs` tool (sqlglot AST) | Unknown tables/columns |
-| 2b | `run_explain` tool (psycopg2) | Planner-level errors (optional, needs live DB) |
-| 3 | `VALIDATOR_PROMPT` + LLM | Semantic correctness vs the original question |
+`backend/college_schema.sql` defines a 10-table PostgreSQL schema:
+`departments`, `professors`, `courses`, `students`, `enrollments`, `exams`, `exam_results`, `library_books`, `book_issues`, `hostels`
 
----
-
-## Environment variables
-
-| Variable | Default | Description |
-|---|---|---|
-| `ANTHROPIC_API_KEY` | required | Your Anthropic API key |
-| `ANTHROPIC_MODEL` | `claude-sonnet-4-20250514` | Model used for all agents |
-| `DB_CONNECTION_STRING` | — | PostgreSQL DSN |
-| `MAX_RETRIES` | `3` | Max Agent 3 retry attempts |
-| `SCHEMA_CACHE_TTL_SECONDS` | `3600` | Schema cache lifetime (seconds) |
-| `LOG_LEVEL` | `INFO` | INFO / DEBUG / WARNING |
+Useful for local testing.
