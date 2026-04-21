@@ -96,9 +96,8 @@ export default function SettingsPanel({ settings, setSettings }) {
         <div className={styles.section}>
           <div className={styles.sectionTitle}>API Information</div>
           <div className={styles.infoGrid}>
-            <InfoRow label="Backend URL" value="http://localhost:8000" mono />
-            <InfoRow label="Proxy Path" value="/api → localhost:8000" mono />
-            <InfoRow label="Swagger UI" value="http://localhost:8000/docs" mono />
+            <InfoRow label="Backend URL" value={import.meta.env.VITE_API_URL} mono />
+            <InfoRow label="Swagger UI" value={`${import.meta.env.VITE_API_URL}/docs`} mono />
             <InfoRow label="Pipeline" value="5-agent LangGraph" />
             <InfoRow label="SQL Dialect" value="PostgreSQL SELECT only" />
           </div>

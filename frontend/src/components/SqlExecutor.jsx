@@ -23,7 +23,7 @@ export default function SqlExecutor({ settings }) {
     setError(null)
 
     try {
-      const res = await fetch('/api/execute', {
+      const res = await fetch(`${import.meta.env.VITE_API_URL}/execute`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

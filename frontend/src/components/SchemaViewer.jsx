@@ -21,7 +21,7 @@ export default function SchemaViewer({ settings }) {
       if (source === 'db') body.connection_string = connStr || undefined
       if (source === 'openapi_url') body.openapi_url = openApiUrl
 
-      const res = await fetch('/api/schema/preview', {
+      const res = await fetch(`${import.meta.env.VITE_API_URL}/schema/preview`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
