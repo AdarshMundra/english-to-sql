@@ -13,7 +13,7 @@ Tools:
 import json
 import re
 from typing import Any
-from urllib.parse import quote, unquote
+from urllib.parse import quote, unquote, urlparse, urlunparse
 
 import sqlglot
 import sqlglot.errors
@@ -21,13 +21,20 @@ from langchain_core.tools import tool
 
 
 def _sanitize_dsn(dsn: str) -> str:
-    """Re-encode the password in a PostgreSQL DSN so special chars like % are safe."""
-    pattern = r'^(postgresql(?:\+\w+)?://[^:@]+:)([^@]*)(@.+)$'
-    match = re.match(pattern, dsn)
-    if match:
-        prefix, password, suffix = match.groups()
-        encoded = quote(unquote(password), safe='')
-        return prefix + encoded + suffix
+    """Re-encode the password in a PostgreSQL DSN so special chars like % or @ are safe."""
+    try:
+        parsed = urlparse(dsn)
+        if parsed.password is not None:
+            # urlparse splits at the last @ so passwords with @ are handled correctly.
+            # parsed.password already percent-decodes, so re-encode cleanly.
+            user = quote(parsed.username or "", safe="")
+            pwd  = quote(parsed.password, safe="")
+            netloc = f"{user}:{pwd}@{parsed.hostname}"
+            if parsed.port:
+                netloc += f":{parsed.port}"
+            return urlunparse(parsed._replace(netloc=netloc))
+    except Exception:
+        pass
     return dsn
 
 
@@ -53,47 +60,47 @@ def fetch_db_schema(connection_string: str) -> str:
         raise RuntimeError("psycopg2 is required. Run: pip install psycopg2-binary")
 
     conn = psycopg2.connect(_sanitize_dsn(connection_string))
-    cur = conn.cursor()
+    try:
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT
+                c.table_name,
+                c.column_name,
+                c.data_type,
+                c.is_nullable,
+                CASE WHEN pk.column_name IS NOT NULL THEN true ELSE false END AS is_pk
+            FROM information_schema.columns c
+            LEFT JOIN (
+                SELECT ku.table_name, ku.column_name
+                FROM information_schema.table_constraints tc
+                JOIN information_schema.key_column_usage ku
+                  ON tc.constraint_name = ku.constraint_name
+                WHERE tc.constraint_type = 'PRIMARY KEY'
+                  AND tc.table_schema = 'public'
+            ) pk ON c.table_name = pk.table_name AND c.column_name = pk.column_name
+            WHERE c.table_schema = 'public'
+            ORDER BY c.table_name, c.ordinal_position
+        """)
+        columns = cur.fetchall()
 
-    cur.execute("""
-        SELECT
-            c.table_name,
-            c.column_name,
-            c.data_type,
-            c.is_nullable,
-            CASE WHEN pk.column_name IS NOT NULL THEN true ELSE false END AS is_pk
-        FROM information_schema.columns c
-        LEFT JOIN (
-            SELECT ku.table_name, ku.column_name
+        cur.execute("""
+            SELECT kcu.table_name, kcu.column_name,
+                   ccu.table_name AS foreign_table, ccu.column_name AS foreign_column
             FROM information_schema.table_constraints tc
-            JOIN information_schema.key_column_usage ku
-              ON tc.constraint_name = ku.constraint_name
-            WHERE tc.constraint_type = 'PRIMARY KEY'
+            JOIN information_schema.key_column_usage kcu
+              ON tc.constraint_name = kcu.constraint_name
+            JOIN information_schema.constraint_column_usage ccu
+              ON ccu.constraint_name = tc.constraint_name
+            WHERE tc.constraint_type = 'FOREIGN KEY'
               AND tc.table_schema = 'public'
-        ) pk ON c.table_name = pk.table_name AND c.column_name = pk.column_name
-        WHERE c.table_schema = 'public'
-        ORDER BY c.table_name, c.ordinal_position
-    """)
-    columns = cur.fetchall()
+        """)
+        fkeys = {(r[0], r[1]): f"{r[2]}.{r[3]}" for r in cur.fetchall()}
 
-    cur.execute("""
-        SELECT kcu.table_name, kcu.column_name,
-               ccu.table_name AS foreign_table, ccu.column_name AS foreign_column
-        FROM information_schema.table_constraints tc
-        JOIN information_schema.key_column_usage kcu
-          ON tc.constraint_name = kcu.constraint_name
-        JOIN information_schema.constraint_column_usage ccu
-          ON ccu.constraint_name = tc.constraint_name
-        WHERE tc.constraint_type = 'FOREIGN KEY'
-          AND tc.table_schema = 'public'
-    """)
-    fkeys = {(r[0], r[1]): f"{r[2]}.{r[3]}" for r in cur.fetchall()}
-
-    cur.execute("SELECT relname, n_live_tup FROM pg_stat_user_tables WHERE schemaname = 'public'")
-    row_counts = {r[0]: r[1] for r in cur.fetchall()}
-
-    cur.close()
-    conn.close()
+        cur.execute("SELECT relname, n_live_tup FROM pg_stat_user_tables WHERE schemaname = 'public'")
+        row_counts = {r[0]: r[1] for r in cur.fetchall()}
+        cur.close()
+    finally:
+        conn.close()
 
     raw: dict[str, Any] = {"tables": {}, "foreign_keys": []}
     for row in columns:
